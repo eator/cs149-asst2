@@ -568,6 +568,52 @@ TestResults simpleTestAsync(ITaskSystem* t) {
 }
 
 /*
+ * Regression test for task systems that retain already-joined threads across
+ * run() calls.  Each launch uses fewer tasks than the configured worker count,
+ * and the same task-system instance is reused several times.
+ */
+TestResults repeatedRunTest(ITaskSystem* t) {
+    const int num_launches = 4;
+    const int num_tasks = 3;
+    const int num_elements = 12;
+    int output[num_elements] = {};
+
+    class RepeatedRunTask : public IRunnable {
+      public:
+        RepeatedRunTask(int* output, int offset)
+            : output_(output), offset_(offset) {}
+
+        void runTask(int task_id, int num_total_tasks) {
+            (void)num_total_tasks;
+            output_[offset_ + task_id] = offset_ + task_id + 1;
+        }
+
+      private:
+        int* output_;
+        int offset_;
+    };
+
+    double start_time = CycleTimer::currentSeconds();
+    for (int launch = 0; launch < num_launches; ++launch) {
+        RepeatedRunTask task(output, launch * num_tasks);
+        t->run(&task, num_tasks);
+    }
+    double end_time = CycleTimer::currentSeconds();
+
+    TestResults results;
+    results.passed = true;
+    results.time = end_time - start_time;
+    for (int i = 0; i < num_elements; ++i) {
+        if (output[i] != i + 1) {
+            results.passed = false;
+            printf("%d: %d expected=%d\n", i, output[i], i + 1);
+            break;
+        }
+    }
+    return results;
+}
+
+/*
  * Computation: pingPongTest launches 400 bulk task launches with 64 tasks each.
  * The computation done by each bulk task launch takes as input a buffer of size
  * `num_elements` as input, performs an elementwise computation, and writes to
