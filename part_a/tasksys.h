@@ -3,6 +3,8 @@
 
 #include "itasksys.h"
 #include <thread>
+#include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <queue>
 #include <future>
@@ -43,7 +45,6 @@ class TaskSystemParallelSpawn: public ITaskSystem {
                                 const std::vector<TaskID>& deps);
         void sync();
     private:
-        std::vector<std::thread> workers_;
         int thread_num_;
 };
 

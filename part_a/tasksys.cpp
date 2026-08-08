@@ -71,8 +71,12 @@ void TaskSystemParallelSpawn::run(IRunnable* runnable, int num_total_tasks) {
     //
 
     std::atomic<int> next_task{0};
-    for (int i = 0; i < thread_num_; i++) {
-        workers_.emplace_back([&] {
+    const int worker_count = std::min(thread_num_, num_total_tasks);
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+
+    for (int i = 0; i < worker_count; i++) {
+        workers.emplace_back([&] {
             while (true) {
                 int task_id = next_task.fetch_add(1);
                 if (task_id >= num_total_tasks) {
@@ -84,7 +88,7 @@ void TaskSystemParallelSpawn::run(IRunnable* runnable, int num_total_tasks) {
         });
     }
 
-    for (auto& w : workers_) {
+    for (auto& w : workers) {
         w.join();
     }
 }
