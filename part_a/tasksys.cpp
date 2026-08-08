@@ -1,4 +1,5 @@
 #include "tasksys.h"
+#include <thread>
 
 
 IRunnable::~IRunnable() {}
@@ -68,8 +69,17 @@ void TaskSystemParallelSpawn::run(IRunnable* runnable, int num_total_tasks) {
     // tasks sequentially on the calling thread.
     //
 
+    std::vector<std::thread> threads;
     for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+        threads.emplace_back(
+            [runnable, i, num_total_tasks] () {
+                runnable->runTask(i, num_total_tasks);
+            }
+        );
+    }
+
+    for (auto& t : threads) {
+        t.join();
     }
 }
 
@@ -94,6 +104,32 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
     return "Parallel + Thread Pool + Spin";
 }
 
+void TaskSystemParallelThreadPoolSpinning::worker_loop()
+{
+    while(true) {
+        int i, n;
+        IRunnable* r;
+
+        {
+            std::lock_guard<std::mutex> lock(queue_mtx_);
+            if (tasks_.empty() && stop_ && remain_tasks_ == 0) {
+                return;
+            } else if (tasks_.empty()) {
+                continue;
+            }
+            std::tie(i, n, r) = tasks_.front();
+            tasks_.pop();
+        }
+
+        r->runTask(i, n);
+
+        {
+            std::lock_guard<std::mutex>  lock(queue_mtx_);
+            remain_tasks_--;
+        }
+    }
+}
+
 TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) {
     //
     // TODO: CS149 student implementations may decide to perform setup
@@ -101,9 +137,23 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int n
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    for (int i = 0; i < num_threads; ++i) {
+        workers_.emplace_back([this] { worker_loop(); });
+    }
 }
 
-TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {}
+TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
+    {
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+        stop_ = true;
+    }
+
+    for (auto& w : workers_) {
+        if (w.joinable()) {
+            w.join();
+        }
+    }
+}
 
 void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_total_tasks) {
 
@@ -114,8 +164,19 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // tasks sequentially on the calling thread.
     //
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+    {
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+        for (int i = 0; i < num_total_tasks; ++i) {
+            tasks_.push({i, num_total_tasks, runnable});
+        }
+        remain_tasks_ += num_total_tasks;
+    }
+
+    while (true) {
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+        if (remain_tasks_ == 0) {
+            break;
+        }
     }
 }
 
@@ -147,6 +208,9 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+      for (int i = 0; i < num_threads; ++i) {
+        workers_.emplace_back([this] { worker_loop(); });
+      }
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -156,6 +220,20 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    std::lock_guard<std::mutex> shutdown_lock(shutdown_mtx_);
+
+    {
+      std::lock_guard<std::mutex> lock(queue_mtx_);
+      stop_ = true;
+    }
+
+    cv_.notify_all();
+
+    for (auto& worker : workers_) {
+      if (worker.joinable()) {
+        worker.join();
+      }
+    }
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
@@ -168,8 +246,17 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     //
 
     for (int i = 0; i < num_total_tasks; i++) {
-        runnable->runTask(i, num_total_tasks);
+        submit([runnable, i, num_total_tasks]() {
+            runnable->runTask(i, num_total_tasks);
+        });
     }
+
+    // while (true) {
+    //     std::lock_guard<std::mutex> lock(queue_mtx_);
+    //     if (remain_tasks_ == 0) {
+    //         break;
+    //     }
+    // }
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
