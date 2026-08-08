@@ -102,7 +102,7 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
                 }
 
                 tasks_.emplace([task]() { (*task)(); });
-                // remain_tasks_++;
+                remain_tasks_++;
             }
 
             cv_.notify_one();
@@ -128,10 +128,14 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
 
                 task();
 
-                // {
-                //     std::lock_guard<std::mutex>  lock(queue_mtx_);
-                //     remain_tasks_--;
-                // }
+                {
+                    std::lock_guard<std::mutex>  lock(queue_mtx_);
+                    remain_tasks_--;
+
+                    if (remain_tasks_ == 0) {
+                        done_cv_.notify_all();
+                    }
+                }
             }
         }
     private:
@@ -141,8 +145,9 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         std::mutex                          queue_mtx_;
         std::mutex                          shutdown_mtx_;
         std::condition_variable             cv_;
+        std::condition_variable             done_cv_;
 
-        // int remain_tasks_{0};
+        int remain_tasks_{0};
         bool stop_{false};
 };
 

@@ -251,12 +251,10 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
         });
     }
 
-    // while (true) {
-    //     std::lock_guard<std::mutex> lock(queue_mtx_);
-    //     if (remain_tasks_ == 0) {
-    //         break;
-    //     }
-    // }
+    {
+        std::unique_lock<std::mutex> lock(queue_mtx_);
+        done_cv_.wait(lock, [this] { return remain_tasks_ == 0; });
+    }
 }
 
 TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
