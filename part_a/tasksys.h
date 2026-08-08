@@ -69,7 +69,7 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
         std::mutex queue_mtx_;
         std::queue<std::tuple<int, int, IRunnable*>> tasks_;
         bool stop_{false};
-        int remain_tasks_{0};
+        std::atomic<int> remain_tasks_{0};
 };
 
 /*

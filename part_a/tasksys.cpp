@@ -116,25 +116,20 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
 
 void TaskSystemParallelThreadPoolSpinning::worker_loop()
 {
-    while(true) {
+    while(!stop_) {
         int i, n;
-        IRunnable* r;
+        IRunnable* r = nullptr;
 
         {
             std::lock_guard<std::mutex> lock(queue_mtx_);
-            if (tasks_.empty() && stop_ && remain_tasks_ == 0) {
-                return;
-            } else if (tasks_.empty()) {
-                continue;
+            if (!tasks_.empty()) {
+                std::tie(i, n, r) = tasks_.front();
+                tasks_.pop();
             }
-            std::tie(i, n, r) = tasks_.front();
-            tasks_.pop();
         }
 
-        r->runTask(i, n);
-
-        {
-            std::lock_guard<std::mutex>  lock(queue_mtx_);
+        if (r) {
+            r->runTask(i, n);
             remain_tasks_--;
         }
     }
@@ -153,15 +148,10 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int n
 }
 
 TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
-    {
-        std::lock_guard<std::mutex> lock(queue_mtx_);
-        stop_ = true;
-    }
+    stop_ = true;
 
     for (auto& w : workers_) {
-        if (w.joinable()) {
-            w.join();
-        }
+        w.join();
     }
 }
 
@@ -176,17 +166,16 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
 
     {
         std::lock_guard<std::mutex> lock(queue_mtx_);
+
         for (int i = 0; i < num_total_tasks; ++i) {
             tasks_.push({i, num_total_tasks, runnable});
         }
+
         remain_tasks_ += num_total_tasks;
     }
 
-    while (true) {
-        std::lock_guard<std::mutex> lock(queue_mtx_);
-        if (remain_tasks_ == 0) {
-            break;
-        }
+    while (remain_tasks_ != 0) {
+        // do nothing
     }
 }
 
