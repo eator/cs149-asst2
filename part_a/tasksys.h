@@ -63,13 +63,17 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
         TaskID runAsyncWithDeps(IRunnable* runnable, int num_total_tasks,
                                 const std::vector<TaskID>& deps);
         void sync();
-        void worker_loop();
+
     private:
-        std::vector<std::thread> workers_;
-        std::mutex queue_mtx_;
-        std::queue<std::tuple<int, int, IRunnable*>> tasks_;
+        void worker_loop();
+
+        std::vector<std::thread>                        workers_;
+        std::queue<std::tuple<int, int, IRunnable*>>    tasks_;
+
+        std::mutex                                      queue_mtx_;
+        std::atomic<int>                                remain_tasks_{0};
+
         bool stop_{false};
-        std::atomic<int> remain_tasks_{0};
 };
 
 /*
@@ -88,70 +92,17 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
                                 const std::vector<TaskID>& deps);
         void sync();
         
-        template <typename F, typename ...Args>
-        auto submit(F&& f, Args... args) -> std::future<typename std::result_of<F(Args...)>::type>
-        {
-            using RetType = typename std::result_of<F(Args...)>::type;
-
-            auto task = std::make_shared<std::packaged_task<RetType()>>(
-                std::bind(std::forward<F>(f), std::forward<Args>(args)...)
-            );
-            auto res = task->get_future();
-
-            {
-                std::lock_guard<std::mutex> lock(queue_mtx_);
-
-                if (stop_) {
-                    throw std::runtime_error("submit on a stopped thread pool");
-                }
-
-                tasks_.emplace([task]() { (*task)(); });
-                remain_tasks_++;
-            }
-
-            cv_.notify_one();
-
-            return res;
-        }
-
-        void worker_loop() {
-            while (true) {
-                std::function<void()> task;
-
-                {
-                    std::unique_lock<std::mutex> lock(queue_mtx_);
-                    cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
-
-                    if (stop_ && tasks_.empty()) {
-                        return;
-                    }
-
-                    task = std::move(tasks_.front());
-                    tasks_.pop();
-                }
-
-                task();
-
-                {
-                    std::lock_guard<std::mutex>  lock(queue_mtx_);
-                    remain_tasks_--;
-
-                    if (remain_tasks_ == 0) {
-                        done_cv_.notify_all();
-                    }
-                }
-            }
-        }
     private:
-        std::vector<std::thread>            workers_;
-        std::queue<std::function<void()>>   tasks_; 
+        void worker_loop();
 
-        std::mutex                          queue_mtx_;
-        std::mutex                          shutdown_mtx_;
-        std::condition_variable             cv_;
-        std::condition_variable             done_cv_;
+        std::vector<std::thread>                        workers_;
+        std::queue<std::tuple<int, int, IRunnable*>>    tasks_;
 
-        int remain_tasks_{0};
+        std::mutex                                      queue_mtx_;
+        std::condition_variable                         cv_;
+        std::condition_variable                         done_cv_;
+        std::atomic<int>                                remain_tasks_{0};
+
         bool stop_{false};
 };
 

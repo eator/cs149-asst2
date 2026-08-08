@@ -114,6 +114,26 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
     return "Parallel + Thread Pool + Spin";
 }
 
+TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) {
+    //
+    // TODO: CS149 student implementations may decide to perform setup
+    // operations (such as thread pool construction) here.
+    // Implementations are free to add new class member variables
+    // (requiring changes to tasksys.h).
+    //
+    for (int i = 0; i < num_threads; ++i) {
+        workers_.emplace_back([this] { worker_loop(); });
+    }
+}
+
+TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
+    stop_ = true;
+
+    for (auto& w : workers_) {
+        w.join();
+    }
+}
+
 void TaskSystemParallelThreadPoolSpinning::worker_loop()
 {
     while(!stop_) {
@@ -132,26 +152,6 @@ void TaskSystemParallelThreadPoolSpinning::worker_loop()
             r->runTask(i, n);
             remain_tasks_--;
         }
-    }
-}
-
-TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): ITaskSystem(num_threads) {
-    //
-    // TODO: CS149 student implementations may decide to perform setup
-    // operations (such as thread pool construction) here.
-    // Implementations are free to add new class member variables
-    // (requiring changes to tasksys.h).
-    //
-    for (int i = 0; i < num_threads; ++i) {
-        workers_.emplace_back([this] { worker_loop(); });
-    }
-}
-
-TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
-    stop_ = true;
-
-    for (auto& w : workers_) {
-        w.join();
     }
 }
 
@@ -219,11 +219,10 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
-    std::lock_guard<std::mutex> shutdown_lock(shutdown_mtx_);
 
     {
-      std::lock_guard<std::mutex> lock(queue_mtx_);
-      stop_ = true;
+        std::unique_lock<std::mutex> lock(queue_mtx_);
+        stop_ = true;
     }
 
     cv_.notify_all();
@@ -232,6 +231,33 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
       if (worker.joinable()) {
         worker.join();
       }
+    }
+}
+
+void TaskSystemParallelThreadPoolSleeping::worker_loop() {
+    while (true) {
+        int i, n;
+        IRunnable* r = nullptr;
+
+        {
+            std::unique_lock<std::mutex> lock(queue_mtx_);
+            cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
+
+            if (stop_ && tasks_.empty()) {
+                return;
+            }
+
+            // here task_ must not empty
+            std::tie(i, n, r) = tasks_.front();
+            tasks_.pop();
+        }
+
+        r->runTask(i, n);
+        remain_tasks_--;
+
+        if (remain_tasks_ == 0) {
+            done_cv_.notify_all();
+        }
     }
 }
 
@@ -244,11 +270,17 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // tasks sequentially on the calling thread.
     //
 
-    for (int i = 0; i < num_total_tasks; i++) {
-        submit([runnable, i, num_total_tasks]() {
-            runnable->runTask(i, num_total_tasks);
-        });
+    {
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+
+        for (int i = 0; i < num_total_tasks; ++i) {
+            tasks_.push({i, num_total_tasks, runnable});
+        }
+
+        remain_tasks_ += num_total_tasks;
     }
+
+    cv_.notify_all();
 
     {
         std::unique_lock<std::mutex> lock(queue_mtx_);
