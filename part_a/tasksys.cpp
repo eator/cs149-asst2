@@ -253,10 +253,17 @@ void TaskSystemParallelThreadPoolSleeping::worker_loop() {
         }
 
         r->runTask(i, n);
-        remain_tasks_--;
 
-        if (remain_tasks_ == 0) {
-            done_cv_.notify_all();
+        bool all_done = false;
+
+        {
+            std::lock_guard<std::mutex> lock(queue_mtx_);
+            remain_tasks_--;
+            all_done = remain_tasks_ == 0;
+        }
+
+        if (all_done) {
+            done_cv_.notify_one();
         }
     }
 }

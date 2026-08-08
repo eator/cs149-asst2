@@ -101,8 +101,8 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         std::mutex                                      queue_mtx_;
         std::condition_variable                         cv_;
         std::condition_variable                         done_cv_;
-        std::atomic<int>                                remain_tasks_{0};
 
+        int  remain_tasks_{0};
         bool stop_{false};
 };
 
